@@ -41,6 +41,7 @@ pub struct RunCommandArgs {
     pub platform_override: Option<String>,
     pub force_device_refresh: bool,
     pub auto_yes: bool,
+    pub filter_out_patterns: Vec<String>,
 }
 
 /// Parses top-level CLI arguments before the primary command.
@@ -113,6 +114,7 @@ pub fn extract_run_command_args(arguments: &[String]) -> Result<RunCommandArgs, 
     let mut saw_double_dash = false;
     let mut force_device_refresh = false;
     let mut auto_yes = false;
+    let mut filter_out_patterns = Vec::new();
 
     let mut index = 0;
     while index < arguments.len() {
@@ -121,6 +123,42 @@ pub fn extract_run_command_args(arguments: &[String]) -> Result<RunCommandArgs, 
         if current == "--" {
             saw_double_dash = true;
             cleaned_args.push(current.clone());
+            index += 1;
+            continue;
+        }
+
+        if !saw_double_dash && (current == "--filter-out" || current == "--ignore-log") {
+            if index + 1 >= arguments.len() {
+                return Err(UsageError::new(format!(
+                    "Expected a pattern after {current}."
+                )));
+            }
+            index += 1;
+            filter_out_patterns.push(arguments[index].clone());
+            index += 1;
+            continue;
+        }
+
+        if !saw_double_dash && current.starts_with("--filter-out=") {
+            let pattern = &current["--filter-out=".len()..];
+            if pattern.is_empty() {
+                return Err(UsageError::new(
+                    "Expected a non-empty pattern after --filter-out=.",
+                ));
+            }
+            filter_out_patterns.push(pattern.to_string());
+            index += 1;
+            continue;
+        }
+
+        if !saw_double_dash && current.starts_with("--ignore-log=") {
+            let pattern = &current["--ignore-log=".len()..];
+            if pattern.is_empty() {
+                return Err(UsageError::new(
+                    "Expected a non-empty pattern after --ignore-log=.",
+                ));
+            }
+            filter_out_patterns.push(pattern.to_string());
             index += 1;
             continue;
         }
@@ -175,6 +213,7 @@ pub fn extract_run_command_args(arguments: &[String]) -> Result<RunCommandArgs, 
         platform_override,
         force_device_refresh,
         auto_yes,
+        filter_out_patterns,
     })
 }
 

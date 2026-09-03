@@ -19,6 +19,7 @@ pub fn print_usage() {
     );
     println!("      --force-device-refresh   Bypass device cache and fetch fresh devices");
     println!("      -y, --yes            Auto-select the first device");
+    println!("      --filter-out <pattern>   Hide log output matching a pattern or regex");
     println!("  pub <subcommand>      Pub-related utilities");
     println!("    sort [options]    Sort dependencies in pubspec.yaml alphabetically");
     println!("    diagnose [options] Diagnose dependency conflicts and solver errors");

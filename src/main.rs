@@ -87,6 +87,7 @@ async fn main() {
         let runner = FlutterRunner::new(
             run_args.cleaned_args,
             run_args.platform_override,
+            run_args.filter_out_patterns,
             verbose,
             run_args.force_device_refresh,
             run_args.auto_yes,

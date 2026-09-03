@@ -51,6 +51,10 @@ fl run --flavor staging --target lib/main_dev.dart
 
 # Only iOS devices please
 fl run --platform ios
+
+# Hide noisy system or driver logs
+fl run --filter-out "gralloc4"
+fl run --filter-out "Empty SMPTE 2094-40 data"
 ```
 
 ### 🎯 Device Selection
@@ -81,12 +85,13 @@ fl flutter doctor   # Pass commands to Flutter
 
 ### ⚙️ Run Options
 
-| Option                   | What it does             |
-| ------------------------ | ------------------------ |
-| `-d <id>`                | Pick a device            |
-| `-y`                     | Auto-select first device |
-| `--platform <name>`      | Filter by platform       |
-| `--force-device-refresh` | Force a fresh list       |
+| Option                   | What it does                               |
+| ------------------------ | ------------------------------------------ |
+| `-d <id>`                | Pick a device                              |
+| `-y`                     | Auto-select first device                   |
+| `--platform <name>`      | Filter by platform                         |
+| `--force-device-refresh` | Force a fresh list                         |
+| `--filter-out <pattern>` | Hide output matching pattern or regex      |
 
 ## ⌨️ Keyboard Shortcuts
 

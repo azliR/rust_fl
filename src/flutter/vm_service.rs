@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use futures_util::{SinkExt, StreamExt};
@@ -7,9 +9,10 @@ use tokio_tungstenite::tungstenite::protocol::Message;
 
 use crate::common::ansi::{format_timestamp, gray, green, red, yellow};
 use crate::common::terminal::term_println;
+use crate::flutter::log_filter::LogFilter;
 
 /// Connects to Dart VM Service via WebSocket and listens for Stdout, Stderr, and Logging events.
-pub async fn start_vm_service_listener(raw_uri: String, verbose: bool) {
+pub async fn start_vm_service_listener(raw_uri: String, log_filter: Arc<LogFilter>, verbose: bool) {
     let ws_url = normalize_vm_service_url(&raw_uri);
     if verbose {
         term_println(&format!(
@@ -88,7 +91,7 @@ pub async fn start_vm_service_listener(raw_uri: String, verbose: bool) {
             _ => continue,
         };
 
-        handle_vm_event(&msg, verbose);
+        handle_vm_event(&msg, &log_filter, verbose);
     }
 }
 
@@ -117,7 +120,7 @@ pub fn normalize_vm_service_url(url_string: &str) -> String {
 }
 
 /// Dispatches stream events for Stdout, Stderr, and Logging.
-fn handle_vm_event(json_text: &str, verbose: bool) {
+fn handle_vm_event(json_text: &str, log_filter: &LogFilter, verbose: bool) {
     let Ok(data) = serde_json::from_str::<Value>(json_text) else {
         return;
     };
@@ -143,7 +146,7 @@ fn handle_vm_event(json_text: &str, verbose: bool) {
                 Ok(bytes) => {
                     let decoded = String::from_utf8_lossy(&bytes);
                     let trimmed = decoded.trim_end();
-                    if !trimmed.is_empty() {
+                    if !trimmed.is_empty() && !log_filter.should_ignore(trimmed) {
                         term_println(&format!("{} {trimmed}", gray(&format_timestamp())));
                     }
                 }
@@ -167,7 +170,7 @@ fn handle_vm_event(json_text: &str, verbose: bool) {
                 Ok(bytes) => {
                     let decoded = String::from_utf8_lossy(&bytes);
                     let trimmed = decoded.trim_end();
-                    if !trimmed.is_empty() {
+                    if !trimmed.is_empty() && !log_filter.should_ignore(trimmed) {
                         term_println(&format!("{} {}", gray(&format_timestamp()), red(trimmed)));
                     }
                 }
@@ -214,11 +217,13 @@ fn handle_vm_event(json_text: &str, verbose: bool) {
             builder.push_str(&stack_trace);
         }
 
-        term_println(&format!(
-            "{} {}",
-            gray(&format_timestamp()),
-            yellow(&builder)
-        ));
+        if !log_filter.should_ignore(&builder) {
+            term_println(&format!(
+                "{} {}",
+                gray(&format_timestamp()),
+                yellow(&builder)
+            ));
+        }
     }
 }
 

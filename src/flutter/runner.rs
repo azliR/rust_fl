@@ -14,6 +14,7 @@ use crate::common::ansi::{cyan, format_timestamp, gray, green, red, yellow};
 use crate::common::terminal::{RawModeGuard, term_println};
 use crate::devices::selector::resolve_device_id;
 use crate::flutter::command::{FlutterCommand, resolve_flutter_command};
+use crate::flutter::log_filter::LogFilter;
 use crate::flutter::vm_service::start_vm_service_listener;
 
 /// Runs Flutter with enhanced logging, automatic file watcher reload, and device selection.
@@ -21,6 +22,7 @@ pub struct FlutterRunner {
     pub forwarded_args: Vec<String>,
     pub verbose: bool,
     pub platform_override: Option<String>,
+    pub filter_out_patterns: Vec<String>,
     pub force_device_refresh: bool,
     pub auto_yes: bool,
     pub flutter_command: FlutterCommand,
@@ -30,6 +32,7 @@ impl FlutterRunner {
     pub fn new(
         forwarded_args: Vec<String>,
         platform_override: Option<String>,
+        filter_out_patterns: Vec<String>,
         verbose: bool,
         force_device_refresh: bool,
         auto_yes: bool,
@@ -40,6 +43,7 @@ impl FlutterRunner {
             forwarded_args,
             verbose,
             platform_override,
+            filter_out_patterns,
             force_device_refresh,
             auto_yes,
             flutter_command: command,
@@ -107,6 +111,7 @@ impl FlutterRunner {
         let app_started = Arc::new(AtomicBool::new(false));
         let is_reloading = Arc::new(AtomicBool::new(false));
         let vm_connected = Arc::new(AtomicBool::new(false));
+        let log_filter = Arc::new(LogFilter::new(&self.filter_out_patterns));
 
         let (stdin_tx, mut stdin_rx) = mpsc::channel::<String>(32);
 
@@ -128,6 +133,7 @@ impl FlutterRunner {
 
         let app_started_clone = Arc::clone(&app_started);
         let vm_connected_clone = Arc::clone(&vm_connected);
+        let log_filter_stdout = Arc::clone(&log_filter);
         let verbose = self.verbose;
 
         let vm_service_regex_stdout = vm_service_regex.clone();
@@ -141,6 +147,7 @@ impl FlutterRunner {
                     &app_started_clone,
                     &vm_connected_clone,
                     &vm_service_regex_stdout,
+                    &log_filter_stdout,
                     verbose,
                 );
             }
@@ -148,6 +155,7 @@ impl FlutterRunner {
 
         let app_started_clone2 = Arc::clone(&app_started);
         let vm_connected_clone2 = Arc::clone(&vm_connected);
+        let log_filter_stderr = Arc::clone(&log_filter);
         tokio::spawn(async move {
             let mut reader = BufReader::new(child_stderr).lines();
             while let Ok(Some(line)) = reader.next_line().await {
@@ -156,6 +164,7 @@ impl FlutterRunner {
                     &app_started_clone2,
                     &vm_connected_clone2,
                     &vm_service_regex_stderr,
+                    &log_filter_stderr,
                     verbose,
                 );
             }
@@ -284,6 +293,7 @@ fn process_flutter_output(
     app_started: &Arc<AtomicBool>,
     vm_connected: &Arc<AtomicBool>,
     vm_service_regex: &Regex,
+    log_filter: &Arc<LogFilter>,
     verbose: bool,
 ) {
     for line in raw_chunk.split(['\r', '\n']) {
@@ -291,8 +301,6 @@ fn process_flutter_output(
         if trimmed.is_empty() {
             continue;
         }
-
-        term_println(&format!("{} {trimmed}", gray(&format_timestamp())));
 
         if let Some(captures) = vm_service_regex.captures(trimmed)
             && let Some(uri_match) = captures.get(1)
@@ -306,9 +314,16 @@ fn process_flutter_output(
                         gray(&format!("Found VM Service URI: {uri}"))
                     ));
                 }
-                tokio::spawn(start_vm_service_listener(uri, verbose));
+                let filter_clone = Arc::clone(log_filter);
+                tokio::spawn(start_vm_service_listener(uri, filter_clone, verbose));
             }
         }
+
+        if log_filter.should_ignore(trimmed) {
+            continue;
+        }
+
+        term_println(&format!("{} {trimmed}", gray(&format_timestamp())));
 
         if (trimmed.contains("Flutter run key commands")
             || trimmed.contains("An Observatory debugger")

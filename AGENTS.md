@@ -15,8 +15,9 @@ The project follows a standard modular Rust binary + library structure:
 - `src/common/`:
   - `ansi.rs`: Terminal ANSI styling (`cyan`, `green`, `yellow`, `red`, `gray`) and local timestamp formatting (`YYYY/MM/DD HH:MM:SS`).
   - `constants.rs`: Global CLI constants such as `CLI_VERSION`, 30-day device staleness threshold, and platform directory mapping.
+  - `terminal.rs`: `RawModeGuard` preserving output processing (`OPOST`/`ONLCR`) and explicit CRLF printing.
 - `src/cli/`:
-  - `args.rs`: Command line parsing, global options validation, and `fl run` argument separation.
+  - `args.rs`: Command line parsing, global options validation, `--filter-out`/`--ignore-log`, and `fl run` argument separation.
   - `usage.rs`: Formatted manual screen and help text.
 - `src/devices/`:
   - `models.rs`: `FlutterDevice`, `DeviceRecord`, and `DeviceSelectionChanges`.
@@ -26,6 +27,7 @@ The project follows a standard modular Rust binary + library structure:
   - `command.rs`: Command handler for `fl device` (`list`, `refresh`, `rm`).
 - `src/flutter/`:
   - `command.rs`: FVM vs global Flutter detection and passthrough execution.
+  - `log_filter.rs`: Regex and literal substring log suppressing engine.
   - `runner.rs`: Flutter run supervisor handling process lifecycle, stdout/stderr timestamps, file watcher debounce, and interactive keyboard shortcuts.
   - `vm_service.rs`: Asynchronous Dart VM Service WebSocket client subscribing to `Stdout`, `Stderr`, and `Logging` streams via JSON-RPC 2.0.
 - `src/pub_utils/`:

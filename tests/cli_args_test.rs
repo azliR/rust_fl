@@ -105,3 +105,20 @@ fn test_normalize_platform_value() {
     assert_eq!(normalize_platform_value("web").unwrap(), "web");
     assert!(normalize_platform_value("blackberry").is_err());
 }
+
+#[test]
+fn test_extract_run_command_args_filter_out_options() {
+    let args = vec![
+        "--filter-out".to_string(),
+        "gralloc4".to_string(),
+        "--ignore-log=SMPTE".to_string(),
+        "--target".to_string(),
+        "lib/main.dart".to_string(),
+    ];
+    let run_args = extract_run_command_args(&args).expect("Should extract");
+    assert_eq!(
+        run_args.filter_out_patterns,
+        vec!["gralloc4".to_string(), "SMPTE".to_string()]
+    );
+    assert_eq!(run_args.cleaned_args, vec!["--target", "lib/main.dart"]);
+}
