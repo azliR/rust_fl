@@ -1,10 +1,11 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::io::{IsTerminal, Write, stdin, stdout};
+use std::io::{IsTerminal, stdin};
 
 use chrono::{DateTime, Utc};
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 
 use crate::common::ansi::{cyan, format_timestamp, gray, red, yellow};
+use crate::common::terminal::{RawModeGuard, term_print, term_println};
 use crate::devices::cache::{
     fetch_devices, load_device_records, merge_devices_into_records, record_device_pick,
     save_device_cache, save_device_records,
@@ -14,24 +15,6 @@ use crate::devices::filter::{
 };
 use crate::devices::models::{DeviceRecord, DeviceSelectionChanges, FlutterDevice};
 use crate::flutter::command::FlutterCommand;
-
-struct RawModeGuard;
-
-impl RawModeGuard {
-    fn enter() -> Option<Self> {
-        if crossterm::terminal::enable_raw_mode().is_ok() {
-            Some(Self)
-        } else {
-            None
-        }
-    }
-}
-
-impl Drop for RawModeGuard {
-    fn drop(&mut self) {
-        let _ = crossterm::terminal::disable_raw_mode();
-    }
-}
 
 /// Tracks active status of an interactive device selection session.
 pub struct SelectionSession {
@@ -111,10 +94,7 @@ impl DeviceSelectionContext {
         let lower = candidate.to_lowercase();
         self.slots
             .values()
-            .find(|&device| {
-                device.id.to_lowercase() == lower || device.name.to_lowercase() == lower
-            })
-            .map(|v| v as _)
+            .find(|device| device.id.to_lowercase() == lower || device.name.to_lowercase() == lower)
     }
 
     pub fn refresh(&mut self, new_devices: &[FlutterDevice]) -> DeviceSelectionChanges {
@@ -170,20 +150,20 @@ pub fn has_device_id_flag(forwarded_args: &[String]) -> bool {
 
 /// Prints available device choices numbered by slot.
 pub fn print_device_choices(selection: &DeviceSelectionContext) {
-    println!();
-    println!("Connected devices:");
+    term_println("");
+    term_println("Connected devices:");
     for (index, device) in selection.entries() {
         let platform = device.target_platform.as_deref().unwrap_or("unknown");
         let sdk_suffix = match &device.sdk {
             Some(sdk) if !sdk.is_empty() => format!(" • {sdk}"),
             _ => String::new(),
         };
-        println!(
+        term_println(&format!(
             "[{index}]: {} ({}) • {platform}{sdk_suffix}",
             device.name, device.id
-        );
+        ));
     }
-    println!();
+    term_println("");
 }
 
 /// Refreshes device list once during an interactive selection session.
@@ -197,7 +177,7 @@ pub async fn refresh_devices_once(
 ) {
     let devices = fetch_devices(flutter_command, verbose).await;
     if devices.is_empty() {
-        println!("{}", yellow("No devices detected on refresh."));
+        term_println(&yellow("No devices detected on refresh."));
         return;
     }
 
@@ -207,13 +187,13 @@ pub async fn refresh_devices_once(
 
     if !session.is_active || !changes.has_changes() {
         if !started_from_cache {
-            println!("{}", gray("Device list is unchanged."));
+            term_println(&gray("Device list is unchanged."));
         }
         return;
     }
 
-    println!();
-    println!("{}", yellow("Device list updated:"));
+    term_println("");
+    term_println(&yellow("Device list updated:"));
     print_device_choices(selection);
 }
 
@@ -229,8 +209,7 @@ pub async fn prompt_device_selection(
     let use_single_key = stdin().is_terminal();
 
     loop {
-        print!("Please choose one (Enter=1, \"q\"=quit, \"r\"=refresh): ");
-        let _ = stdout().flush();
+        term_print("Please choose one (Enter=1, \"q\"=quit, \"r\"=refresh): ");
 
         if use_single_key {
             let _raw_guard = RawModeGuard::enter();
@@ -239,7 +218,7 @@ pub async fn prompt_device_selection(
                     if key.modifiers.contains(KeyModifiers::CONTROL)
                         && key.code == KeyCode::Char('c')
                     {
-                        println!("{}", cyan("\n👋 Quitting..."));
+                        term_println(&cyan("\n👋 Quitting..."));
                         std::process::exit(130);
                     }
                     break key;
@@ -250,17 +229,17 @@ pub async fn prompt_device_selection(
             match key_event.code {
                 KeyCode::Enter => {
                     if selection.contains_index(1) {
-                        println!();
+                        term_println("");
                         return Some(selection.device_for_index(1).unwrap().id.clone());
                     }
                     continue;
                 }
                 KeyCode::Char('q') | KeyCode::Char('Q') => {
-                    println!("{}", cyan("\n👋 Quitting..."));
+                    term_println(&cyan("\n👋 Quitting..."));
                     std::process::exit(0);
                 }
                 KeyCode::Char('r') | KeyCode::Char('R') => {
-                    println!("{}", cyan("\nRefreshing device list..."));
+                    term_println(&cyan("\nRefreshing device list..."));
                     refresh_devices_once(
                         flutter_command,
                         filter,
@@ -275,26 +254,22 @@ pub async fn prompt_device_selection(
                 KeyCode::Char(digit) if digit.is_ascii_digit() => {
                     let index = (digit as u8 - b'0') as usize;
                     if selection.contains_index(index) {
-                        println!();
+                        term_println("");
                         return Some(selection.device_for_index(index).unwrap().id.clone());
                     }
                     if selection.is_missing_index(index) {
-                        println!(
-                            "{}",
-                            red(&format!(
-                                "\nDevice {index} is no longer available; please choose another device."
-                            ))
-                        );
+                        term_println(&red(&format!(
+                            "\nDevice {index} is no longer available; please choose another device."
+                        )));
                         continue;
                     }
                 }
                 _ => {}
             }
 
-            println!(
-                "{}",
-                red("\nInvalid selection. Enter a device number, or \"q\" to quit.")
-            );
+            term_println(&red(
+                "\nInvalid selection. Enter a device number, or \"q\" to quit.",
+            ));
             continue;
         }
 
@@ -305,7 +280,7 @@ pub async fn prompt_device_selection(
         let trimmed = line.trim();
         if trimmed.is_empty() {
             if selection.contains_index(1) {
-                println!();
+                term_println("");
                 return Some(selection.device_for_index(1).unwrap().id.clone());
             }
             continue;
@@ -313,12 +288,12 @@ pub async fn prompt_device_selection(
 
         let lower = trimmed.to_lowercase();
         if lower == "q" {
-            println!("{}", cyan("\n👋 Quitting..."));
+            term_println(&cyan("\n👋 Quitting..."));
             std::process::exit(0);
         }
 
         if lower == "r" {
-            println!("{}", cyan("\nRefreshing device list..."));
+            term_println(&cyan("\nRefreshing device list..."));
             refresh_devices_once(
                 flutter_command,
                 filter,
@@ -333,29 +308,25 @@ pub async fn prompt_device_selection(
 
         if let Ok(index) = trimmed.parse::<usize>() {
             if selection.contains_index(index) {
-                println!();
+                term_println("");
                 return Some(selection.device_for_index(index).unwrap().id.clone());
             }
             if selection.is_missing_index(index) {
-                println!(
-                    "{}",
-                    red(&format!(
-                        "\nDevice {index} is no longer available; please choose another device."
-                    ))
-                );
+                term_println(&red(&format!(
+                    "\nDevice {index} is no longer available; please choose another device."
+                )));
                 continue;
             }
         }
 
         if let Some(device) = selection.match_by_name_or_id(trimmed) {
-            println!();
+            term_println("");
             return Some(device.id.clone());
         }
 
-        println!(
-            "{}",
-            red("\nInvalid selection. Enter a device number or its name/ID, or \"q\" to quit.")
-        );
+        term_println(&red(
+            "\nInvalid selection. Enter a device number or its name/ID, or \"q\" to quit.",
+        ));
     }
 }
 
@@ -370,10 +341,9 @@ pub async fn resolve_device_id(
 ) -> Option<String> {
     if has_device_id_flag(forwarded_args) {
         if verbose {
-            println!(
-                "{}",
-                gray("Device flag already provided; skipping device selection.")
-            );
+            term_println(&gray(
+                "Device flag already provided; skipping device selection.",
+            ));
         }
         return None;
     }
@@ -383,19 +353,19 @@ pub async fn resolve_device_id(
     let mut using_cached_devices = !records.is_empty();
 
     if !force_device_refresh && using_cached_devices {
-        println!(
+        term_println(&format!(
             "{} {}",
             gray(&format_timestamp()),
             gray("Using cached device list (press \"r\" to refresh).")
-        );
+        ));
     }
 
     if force_device_refresh || !using_cached_devices {
-        println!(
+        term_println(&format!(
             "{} {}",
             gray(&format_timestamp()),
             gray("Fetching device list...")
-        );
+        ));
         let fetched_devices = fetch_devices(flutter_command, verbose).await;
         if !fetched_devices.is_empty() {
             records = merge_devices_into_records(&fetched_devices, verbose);
@@ -458,13 +428,10 @@ pub async fn resolve_device_id(
 
     if auto_yes {
         let selected = &devices_for_prompt[0];
-        println!(
-            "{}",
-            gray(&format!(
-                "Auto-selecting first device: {} ({})",
-                selected.name, selected.id
-            ))
-        );
+        term_println(&gray(&format!(
+            "Auto-selecting first device: {} ({})",
+            selected.name, selected.id
+        )));
         record_device_pick(&selected.id, Some(&project_path), verbose);
         return Some(selected.id.clone());
     }

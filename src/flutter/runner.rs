@@ -11,27 +11,10 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
 
 use crate::common::ansi::{cyan, format_timestamp, gray, green, red, yellow};
+use crate::common::terminal::{RawModeGuard, term_println};
 use crate::devices::selector::resolve_device_id;
 use crate::flutter::command::{FlutterCommand, resolve_flutter_command};
 use crate::flutter::vm_service::start_vm_service_listener;
-
-struct TerminalRawGuard;
-
-impl TerminalRawGuard {
-    fn enter() -> Option<Self> {
-        if crossterm::terminal::enable_raw_mode().is_ok() {
-            Some(Self)
-        } else {
-            None
-        }
-    }
-}
-
-impl Drop for TerminalRawGuard {
-    fn drop(&mut self) {
-        let _ = crossterm::terminal::disable_raw_mode();
-    }
-}
 
 /// Runs Flutter with enhanced logging, automatic file watcher reload, and device selection.
 pub struct FlutterRunner {
@@ -65,11 +48,11 @@ impl FlutterRunner {
 
     /// Executes the full Flutter supervision lifecycle.
     pub async fn run(self) -> i32 {
-        println!(
+        term_println(&format!(
             "{} {}",
             gray(&format_timestamp()),
             cyan("🚀 Starting Flutter with enhanced features...")
-        );
+        ));
 
         let device_id = resolve_device_id(
             &self.flutter_command,
@@ -90,14 +73,14 @@ impl FlutterRunner {
 
         let command_args = self.flutter_command.with_args(&flutter_args);
         if self.verbose {
-            println!(
+            term_println(&format!(
                 "{} {}",
                 gray(&format_timestamp()),
                 gray(&format!(
                     "Running: {}",
                     self.flutter_command.describe(&command_args)
                 ))
-            );
+            ));
         }
 
         let mut child = match tokio::process::Command::new(&self.flutter_command.executable)
@@ -188,7 +171,11 @@ impl FlutterRunner {
                 if is_reloading_action.swap(true, Ordering::SeqCst) {
                     continue;
                 }
-                println!("{} {}", gray(&format_timestamp()), cyan("🔥 Hot reload..."));
+                term_println(&format!(
+                    "{} {}",
+                    gray(&format_timestamp()),
+                    cyan("🔥 Hot reload...")
+                ));
                 let _ = stdin_tx_action.send("r".to_string()).await;
                 tokio::time::sleep(Duration::from_millis(1000)).await;
                 is_reloading_action.store(false, Ordering::SeqCst);
@@ -202,11 +189,11 @@ impl FlutterRunner {
                 if is_reloading_restart.swap(true, Ordering::SeqCst) {
                     continue;
                 }
-                println!(
+                term_println(&format!(
                     "{} {}",
                     gray(&format_timestamp()),
                     cyan("🔄 Hot restart...")
-                );
+                ));
                 let _ = stdin_tx_restart.send("R".to_string()).await;
                 tokio::time::sleep(Duration::from_millis(2000)).await;
                 is_reloading_restart.store(false, Ordering::SeqCst);
@@ -221,7 +208,7 @@ impl FlutterRunner {
             let stdin_tx_kb = stdin_tx.clone();
 
             std::thread::spawn(move || {
-                let _guard = TerminalRawGuard::enter();
+                let _guard = RawModeGuard::enter();
                 loop {
                     let key = match event::read() {
                         Ok(Event::Key(k)) => k,
@@ -232,35 +219,35 @@ impl FlutterRunner {
                     if key.modifiers.contains(KeyModifiers::CONTROL)
                         && key.code == KeyCode::Char('c')
                     {
-                        println!("{}", cyan("\n👋 Quitting..."));
+                        term_println(&cyan("\n👋 Quitting..."));
                         std::process::exit(130);
                     }
 
                     match key.code {
                         KeyCode::Char('r') => {
                             if !app_started_kb.load(Ordering::SeqCst) {
-                                println!(
+                                term_println(&format!(
                                     "{} {}",
                                     gray(&format_timestamp()),
                                     yellow("⏳ Waiting for app to start...")
-                                );
+                                ));
                                 continue;
                             }
                             let _ = reload_tx_kb.blocking_send(());
                         }
                         KeyCode::Char('R') => {
                             if !app_started_kb.load(Ordering::SeqCst) {
-                                println!(
+                                term_println(&format!(
                                     "{} {}",
                                     gray(&format_timestamp()),
                                     yellow("⏳ Waiting for app to start...")
-                                );
+                                ));
                                 continue;
                             }
                             let _ = restart_tx_kb.blocking_send(());
                         }
                         KeyCode::Char('q') | KeyCode::Char('Q') => {
-                            println!("{}", cyan("\n👋 Quitting..."));
+                            term_println(&cyan("\n👋 Quitting..."));
                             let _ = stdin_tx_kb.blocking_send("q".to_string());
                             break;
                         }
@@ -283,7 +270,7 @@ impl FlutterRunner {
                 }
             }
             _ = tokio::signal::ctrl_c() => {
-                println!("{}", cyan("\n👋 Received Ctrl+C; cleaning up..."));
+                term_println(&cyan("\n👋 Received Ctrl+C; cleaning up..."));
                 let _ = child.kill().await;
                 130
             }
@@ -293,65 +280,68 @@ impl FlutterRunner {
 
 /// Formats and parses child Flutter output lines.
 fn process_flutter_output(
-    line: &str,
+    raw_chunk: &str,
     app_started: &Arc<AtomicBool>,
     vm_connected: &Arc<AtomicBool>,
     vm_service_regex: &Regex,
     verbose: bool,
 ) {
-    if line.trim().is_empty() {
-        return;
-    }
-
-    println!("{} {line}", gray(&format_timestamp()));
-
-    if let Some(captures) = vm_service_regex.captures(line)
-        && let Some(uri_match) = captures.get(1)
-    {
-        let uri = uri_match.as_str().to_string();
-        if !vm_connected.swap(true, Ordering::SeqCst) {
-            if verbose {
-                println!(
-                    "{} {}",
-                    gray(&format_timestamp()),
-                    gray(&format!("Found VM Service URI: {uri}"))
-                );
-            }
-            tokio::spawn(start_vm_service_listener(uri, verbose));
+    for line in raw_chunk.split(['\r', '\n']) {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
         }
-    }
 
-    if (line.contains("Flutter run key commands")
-        || line.contains("An Observatory debugger")
-        || line.contains("A Dart VM Service"))
-        && !app_started.swap(true, Ordering::SeqCst)
-    {
-        println!(
-            "{} {}",
-            gray(&format_timestamp()),
-            green("✓ App started successfully")
-        );
-        println!(
-            "{} {}",
-            gray(&format_timestamp()),
-            cyan("Commands: r=reload, R=restart, q=quit, h=help")
-        );
-    }
+        term_println(&format!("{} {trimmed}", gray(&format_timestamp())));
 
-    if line.contains("Reloaded") || line.contains("reloaded") {
-        println!(
-            "{} {}",
-            gray(&format_timestamp()),
-            green("✓ Hot reload complete")
-        );
-    }
+        if let Some(captures) = vm_service_regex.captures(trimmed)
+            && let Some(uri_match) = captures.get(1)
+        {
+            let uri = uri_match.as_str().to_string();
+            if !vm_connected.swap(true, Ordering::SeqCst) {
+                if verbose {
+                    term_println(&format!(
+                        "{} {}",
+                        gray(&format_timestamp()),
+                        gray(&format!("Found VM Service URI: {uri}"))
+                    ));
+                }
+                tokio::spawn(start_vm_service_listener(uri, verbose));
+            }
+        }
 
-    if line.contains("Restarted") || line.contains("restarted") {
-        println!(
-            "{} {}",
-            gray(&format_timestamp()),
-            green("✓ Hot restart complete")
-        );
+        if (trimmed.contains("Flutter run key commands")
+            || trimmed.contains("An Observatory debugger")
+            || trimmed.contains("A Dart VM Service"))
+            && !app_started.swap(true, Ordering::SeqCst)
+        {
+            term_println(&format!(
+                "{} {}",
+                gray(&format_timestamp()),
+                green("✓ App started successfully")
+            ));
+            term_println(&format!(
+                "{} {}",
+                gray(&format_timestamp()),
+                cyan("Commands: r=reload, R=restart, q=quit, h=help")
+            ));
+        }
+
+        if trimmed.contains("Reloaded") || trimmed.contains("reloaded") {
+            term_println(&format!(
+                "{} {}",
+                gray(&format_timestamp()),
+                green("✓ Hot reload complete")
+            ));
+        }
+
+        if trimmed.contains("Restarted") || trimmed.contains("restarted") {
+            term_println(&format!(
+                "{} {}",
+                gray(&format_timestamp()),
+                green("✓ Hot restart complete")
+            ));
+        }
     }
 }
 
@@ -359,19 +349,19 @@ fn process_flutter_output(
 fn setup_file_watcher(app_started: Arc<AtomicBool>, reload_tx: mpsc::Sender<()>) {
     let lib_dir = Path::new("lib");
     if !lib_dir.is_dir() {
-        println!(
+        term_println(&format!(
             "{} {}",
             gray(&format_timestamp()),
             yellow("Warning: lib directory not found")
-        );
+        ));
         return;
     }
 
-    println!(
+    term_println(&format!(
         "{} {}",
         gray(&format_timestamp()),
         gray("👀 Watching for file changes in lib/...")
-    );
+    ));
 
     let (file_event_tx, mut file_event_rx) = mpsc::channel::<PathBuf>(32);
 
@@ -419,11 +409,11 @@ fn setup_file_watcher(app_started: Arc<AtomicBool>, reload_tx: mpsc::Sender<()>)
                 } => {
                     debounce_timer = None;
                     if app_started.load(Ordering::SeqCst) {
-                        println!(
+                        term_println(&format!(
                             "{} {}",
                             gray(&format_timestamp()),
                             cyan(&format!("📝 File changed: {pending_file_name}"))
-                        );
+                        ));
                         let _ = reload_tx.send(()).await;
                     }
                 }
@@ -434,14 +424,14 @@ fn setup_file_watcher(app_started: Arc<AtomicBool>, reload_tx: mpsc::Sender<()>)
 
 /// Displays interactive keyboard help.
 fn show_interactive_help() {
-    println!();
-    println!("{}", cyan("═══════════════════════════════"));
-    println!("{}", cyan("  Available Commands"));
-    println!("{}", cyan("═══════════════════════════════"));
-    println!("  {} - Hot reload (fast refresh)", cyan("r"));
-    println!("  {} - Hot restart (full restart)", cyan("R"));
-    println!("  {} - Quit application", cyan("q"));
-    println!("  {} - Show this help", cyan("h"));
-    println!("{}", cyan("═══════════════════════════════"));
-    println!();
+    term_println("");
+    term_println(&cyan("═══════════════════════════════"));
+    term_println(&cyan("  Available Commands"));
+    term_println(&cyan("═══════════════════════════════"));
+    term_println(&format!("  {} - Hot reload (fast refresh)", cyan("r")));
+    term_println(&format!("  {} - Hot restart (full restart)", cyan("R")));
+    term_println(&format!("  {} - Quit application", cyan("q")));
+    term_println(&format!("  {} - Show this help", cyan("h")));
+    term_println(&cyan("═══════════════════════════════"));
+    term_println("");
 }

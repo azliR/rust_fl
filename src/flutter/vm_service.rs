@@ -6,16 +6,17 @@ use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::protocol::Message;
 
 use crate::common::ansi::{format_timestamp, gray, green, red, yellow};
+use crate::common::terminal::term_println;
 
 /// Connects to Dart VM Service via WebSocket and listens for Stdout, Stderr, and Logging events.
 pub async fn start_vm_service_listener(raw_uri: String, verbose: bool) {
     let ws_url = normalize_vm_service_url(&raw_uri);
     if verbose {
-        println!(
+        term_println(&format!(
             "{} {}",
             gray(&format_timestamp()),
             gray(&format!("Connecting to VM Service at {ws_url}"))
-        );
+        ));
     }
 
     let connection_result = connect_async(&ws_url).await;
@@ -31,17 +32,17 @@ pub async fn start_vm_service_listener(raw_uri: String, verbose: bool) {
             match connect_async(&fallback_url).await {
                 Ok(stream) => stream,
                 Err(_) => {
-                    println!(
+                    term_println(&format!(
                         "{} {}",
                         gray(&format_timestamp()),
                         red(&format!("Failed to connect to VM Service: {error}"))
-                    );
+                    ));
                     if verbose {
-                        println!(
+                        term_println(&format!(
                             "{} {}",
                             gray(&format_timestamp()),
                             gray("Enhanced logging will not be available")
-                        );
+                        ));
                     }
                     return;
                 }
@@ -49,11 +50,11 @@ pub async fn start_vm_service_listener(raw_uri: String, verbose: bool) {
         }
     };
 
-    println!(
+    term_println(&format!(
         "{} {}",
         gray(&format_timestamp()),
         green("✓ Connected to VM Service for enhanced logging")
-    );
+    ));
 
     let streams_to_listen = ["Stdout", "Stderr", "Logging"];
     for (id_index, stream_id) in streams_to_listen.iter().enumerate() {
@@ -63,60 +64,72 @@ pub async fn start_vm_service_listener(raw_uri: String, verbose: bool) {
             "params": {
                 "streamId": stream_id
             },
-            "id": (id_index + 1).to_string()
+            "id": id_index + 1
         });
 
-        if ws_stream
-            .send(Message::Text(request.to_string().into()))
-            .await
-            .is_err()
+        let json_string = request.to_string();
+        if let Err(error) = ws_stream.send(Message::Text(json_string.into())).await
+            && verbose
         {
-            return;
+            term_println(&format!(
+                "{} {}",
+                gray(&format_timestamp()),
+                gray(&format!("Failed to subscribe to {stream_id}: {error}"))
+            ));
         }
     }
 
     while let Some(msg_result) = ws_stream.next().await {
-        let message = match msg_result {
-            Ok(Message::Text(text)) => text,
-            Ok(_) => continue,
+        let msg = match msg_result {
+            Ok(Message::Text(text)) => text.to_string(),
+            Ok(Message::Binary(bin)) => String::from_utf8_lossy(&bin).to_string(),
+            Ok(Message::Close(_)) => break,
             Err(_) => break,
+            _ => continue,
         };
 
-        handle_vm_message(&message, verbose);
+        handle_vm_event(&msg, verbose);
     }
 }
 
-/// Normalizes HTTP/HTTPS VM service URIs into WebSocket URIs.
-pub fn normalize_vm_service_url(raw_uri: &str) -> String {
-    let mut ws_uri = raw_uri
-        .replace("http://", "ws://")
-        .replace("https://", "wss://");
-
-    if ws_uri.ends_with("/ws") || ws_uri.ends_with("/ws/") {
-        return ws_uri;
-    }
-
-    if ws_uri.ends_with('/') {
-        ws_uri.push_str("ws");
+/// Normalizes Dart VM Service HTTP URL to WebSocket ws:// URL.
+pub fn normalize_vm_service_url(url_string: &str) -> String {
+    let trimmed = url_string.trim();
+    let mut ws_url = if let Some(stripped) = trimmed.strip_prefix("http://") {
+        format!("ws://{stripped}")
+    } else if let Some(stripped) = trimmed.strip_prefix("https://") {
+        format!("wss://{stripped}")
+    } else if !trimmed.starts_with("ws://") && !trimmed.starts_with("wss://") {
+        format!("ws://{trimmed}")
     } else {
-        ws_uri.push_str("/ws");
-    }
-
-    ws_uri
-}
-
-/// Processes an incoming JSON-RPC event message from the Dart VM Service.
-fn handle_vm_message(message: &str, verbose: bool) {
-    let parsed: Value = match serde_json::from_str(message) {
-        Ok(value) => value,
-        Err(_) => return,
+        trimmed.to_string()
     };
 
-    if parsed.get("method").and_then(Value::as_str) != Some("streamNotify") {
+    if !ws_url.ends_with("/ws") {
+        if ws_url.ends_with('/') {
+            ws_url.push_str("ws");
+        } else {
+            ws_url.push_str("/ws");
+        }
+    }
+
+    ws_url
+}
+
+/// Dispatches stream events for Stdout, Stderr, and Logging.
+fn handle_vm_event(json_text: &str, verbose: bool) {
+    let Ok(data) = serde_json::from_str::<Value>(json_text) else {
+        return;
+    };
+
+    let Some(method) = data.get("method").and_then(Value::as_str) else {
+        return;
+    };
+    if method != "streamNotify" {
         return;
     }
 
-    let Some(params) = parsed.get("params") else {
+    let Some(params) = data.get("params") else {
         return;
     };
     let stream_id = params.get("streamId").and_then(Value::as_str).unwrap_or("");
@@ -131,16 +144,16 @@ fn handle_vm_message(message: &str, verbose: bool) {
                     let decoded = String::from_utf8_lossy(&bytes);
                     let trimmed = decoded.trim_end();
                     if !trimmed.is_empty() {
-                        println!("{} {trimmed}", gray(&format_timestamp()));
+                        term_println(&format!("{} {trimmed}", gray(&format_timestamp())));
                     }
                 }
                 Err(error) => {
                     if verbose {
-                        println!(
+                        term_println(&format!(
                             "{} {}",
                             gray(&format_timestamp()),
                             gray(&format!("Failed to decode stdout: {error}"))
-                        );
+                        ));
                     }
                 }
             }
@@ -155,16 +168,16 @@ fn handle_vm_message(message: &str, verbose: bool) {
                     let decoded = String::from_utf8_lossy(&bytes);
                     let trimmed = decoded.trim_end();
                     if !trimmed.is_empty() {
-                        println!("{} {}", gray(&format_timestamp()), red(trimmed));
+                        term_println(&format!("{} {}", gray(&format_timestamp()), red(trimmed)));
                     }
                 }
                 Err(error) => {
                     if verbose {
-                        println!(
+                        term_println(&format!(
                             "{} {}",
                             gray(&format_timestamp()),
                             gray(&format!("Failed to decode stderr: {error}"))
-                        );
+                        ));
                     }
                 }
             }
@@ -201,7 +214,11 @@ fn handle_vm_message(message: &str, verbose: bool) {
             builder.push_str(&stack_trace);
         }
 
-        println!("{} {}", gray(&format_timestamp()), yellow(&builder));
+        term_println(&format!(
+            "{} {}",
+            gray(&format_timestamp()),
+            yellow(&builder)
+        ));
     }
 }
 
@@ -215,18 +232,8 @@ fn extract_instance_string(value: Option<&Value>) -> String {
         return s.to_string();
     }
 
-    if let Some(obj) = val.as_object() {
-        if let Some(kind) = obj.get("kind").and_then(Value::as_str)
-            && kind == "Null"
-        {
-            return String::new();
-        }
-        if let Some(string_val) = obj.get("valueAsString").and_then(Value::as_str) {
-            if string_val == "null" {
-                return String::new();
-            }
-            return string_val.to_string();
-        }
+    if let Some(val_str) = val.get("valueAsString").and_then(Value::as_str) {
+        return val_str.to_string();
     }
 
     String::new()

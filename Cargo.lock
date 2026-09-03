@@ -271,6 +271,7 @@ dependencies = [
  "crossterm",
  "dirs",
  "futures-util",
+ "libc",
  "notify",
  "regex",
  "serde",
