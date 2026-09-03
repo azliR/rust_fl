@@ -145,9 +145,11 @@ fn handle_vm_event(json_text: &str, log_filter: &LogFilter, verbose: bool) {
             match BASE64.decode(bytes_b64) {
                 Ok(bytes) => {
                     let decoded = String::from_utf8_lossy(&bytes);
-                    let trimmed = decoded.trim_end();
-                    if !trimmed.is_empty() && !log_filter.should_ignore(trimmed) {
-                        term_println(&format!("{} {trimmed}", gray(&format_timestamp())));
+                    for line in decoded.split(['\r', '\n']) {
+                        let trimmed = line.trim();
+                        if !trimmed.is_empty() && !log_filter.should_ignore(trimmed) {
+                            term_println(&format!("{} {trimmed}", gray(&format_timestamp())));
+                        }
                     }
                 }
                 Err(error) => {
@@ -169,9 +171,15 @@ fn handle_vm_event(json_text: &str, log_filter: &LogFilter, verbose: bool) {
             match BASE64.decode(bytes_b64) {
                 Ok(bytes) => {
                     let decoded = String::from_utf8_lossy(&bytes);
-                    let trimmed = decoded.trim_end();
-                    if !trimmed.is_empty() && !log_filter.should_ignore(trimmed) {
-                        term_println(&format!("{} {}", gray(&format_timestamp()), red(trimmed)));
+                    for line in decoded.split(['\r', '\n']) {
+                        let trimmed = line.trim();
+                        if !trimmed.is_empty() && !log_filter.should_ignore(trimmed) {
+                            term_println(&format!(
+                                "{} {}",
+                                gray(&format_timestamp()),
+                                red(trimmed)
+                            ));
+                        }
                     }
                 }
                 Err(error) => {
@@ -200,15 +208,18 @@ fn handle_vm_event(json_text: &str, log_filter: &LogFilter, verbose: bool) {
             .map(|l| l.to_string())
             .unwrap_or_default();
 
-        let prefix = if !logger_name.is_empty() {
-            format!("[{logger_name}]")
-        } else if !level.is_empty() && level != "-1" {
-            format!("[L{level}]")
-        } else {
-            String::new()
-        };
+        let prefix =
+            if !logger_name.is_empty() && !level.is_empty() && level != "0" && level != "-1" {
+                format!("[{logger_name}:L{level}] ")
+            } else if !logger_name.is_empty() {
+                format!("[{logger_name}] ")
+            } else if !level.is_empty() && level != "0" && level != "-1" {
+                format!("[L{level}] ")
+            } else {
+                String::new()
+            };
 
-        let mut builder = format!("📝 {prefix} {log_message}");
+        let mut builder = format!("📝 {prefix}{log_message}");
         if !error_string.is_empty() {
             builder.push_str(&format!("  error: {error_string}"));
         }
@@ -233,11 +244,27 @@ fn extract_instance_string(value: Option<&Value>) -> String {
         return String::new();
     };
 
+    if val.is_null() {
+        return String::new();
+    }
+
+    if let Some(kind) = val.get("kind").and_then(Value::as_str)
+        && kind == "Null"
+    {
+        return String::new();
+    }
+
     if let Some(s) = val.as_str() {
+        if s == "null" {
+            return String::new();
+        }
         return s.to_string();
     }
 
     if let Some(val_str) = val.get("valueAsString").and_then(Value::as_str) {
+        if val_str == "null" {
+            return String::new();
+        }
         return val_str.to_string();
     }
 

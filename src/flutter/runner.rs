@@ -111,7 +111,7 @@ impl FlutterRunner {
         let app_started = Arc::new(AtomicBool::new(false));
         let is_reloading = Arc::new(AtomicBool::new(false));
         let vm_connected = Arc::new(AtomicBool::new(false));
-        let log_filter = Arc::new(LogFilter::new(&self.filter_out_patterns));
+        let log_filter = Arc::new(LogFilter::new(&self.filter_out_patterns, !self.verbose));
 
         let (stdin_tx, mut stdin_rx) = mpsc::channel::<String>(32);
 
