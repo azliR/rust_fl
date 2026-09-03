@@ -5,12 +5,14 @@ A high-performance, native Rust companion for `flutter run` that provides auto h
 ## ✨ Features
 
 ### 🔥 Auto Reload & Logging
+
 - Watches `lib/` and hot reloads automatically when you save
 - Shows `dart:developer` logs right in your terminal via Dart VM Service WebSocket
 - All `flutter run` options work — just pass them through!
 - Same `r`, `R`, `q` shortcuts you're used to
 
 ### 📱 Smart Device Management
+
 - **Smart ranking** — Devices used in this project appear first
 - **Recently used** — Sorted by most recent usage
 - **Remembers everything** — Devices stick around across refreshes
@@ -21,7 +23,7 @@ A high-performance, native Rust companion for `flutter run` that provides auto h
 
 ```sh
 # Clone it
-git clone https://github.com/azliR/dart_fl.git
+git clone https://github.com/azliR/rust_fl.git
 cd fl_rust
 
 # Build and install to ~/.cargo/bin
@@ -54,6 +56,7 @@ fl run --platform ios
 ### 🎯 Device Selection
 
 When picking a device:
+
 - **1-9** — Select by number
 - **Enter** — Grab the first one
 - **r** — Refresh the list
@@ -78,21 +81,21 @@ fl flutter doctor   # Pass commands to Flutter
 
 ### ⚙️ Run Options
 
-| Option | What it does |
-|--------|--------------|
-| `-d <id>` | Pick a device |
-| `-y` | Auto-select first device |
-| `--platform <name>` | Filter by platform |
-| `--force-device-refresh` | Force a fresh list |
+| Option                   | What it does             |
+| ------------------------ | ------------------------ |
+| `-d <id>`                | Pick a device            |
+| `-y`                     | Auto-select first device |
+| `--platform <name>`      | Filter by platform       |
+| `--force-device-refresh` | Force a fresh list       |
 
 ## ⌨️ Keyboard Shortcuts
 
-| Key | Action |
-|-----|--------|
-| `r` | Hot reload |
+| Key | Action      |
+| --- | ----------- |
+| `r` | Hot reload  |
 | `R` | Hot restart |
-| `q` | Quit |
-| `h` | Help |
+| `q` | Quit        |
+| `h` | Help        |
 
 ## 🔧 Troubleshooting
 
