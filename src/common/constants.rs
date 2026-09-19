@@ -1,5 +1,5 @@
 /// Current CLI version string.
-pub const CLI_VERSION: &str = "0.19.0";
+pub const CLI_VERSION: &str = "0.19.1";
 
 /// Number of days after which unpicked devices are pruned from cache.
 pub const STALE_DEVICE_DAYS: i64 = 30;

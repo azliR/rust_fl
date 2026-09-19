@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{IsTerminal, stdin};
 
 use chrono::{DateTime, Utc};
-use crossterm::event::{self, Event, KeyCode, KeyModifiers};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::common::ansi::{cyan, format_timestamp, gray, red, yellow};
 use crate::common::terminal::{RawModeGuard, term_print, term_println};
@@ -197,6 +197,27 @@ pub async fn refresh_devices_once(
     print_device_choices(selection);
 }
 
+/// Determines whether a key event corresponds to confirming selection with Enter.
+pub fn is_enter_key(key: &KeyEvent) -> bool {
+    if matches!(
+        key.code,
+        KeyCode::Enter | KeyCode::Char('\n') | KeyCode::Char('\r')
+    ) {
+        return true;
+    }
+
+    if key.modifiers.contains(KeyModifiers::CONTROL)
+        && matches!(
+            key.code,
+            KeyCode::Char('j') | KeyCode::Char('m') | KeyCode::Char('J') | KeyCode::Char('M')
+        )
+    {
+        return true;
+    }
+
+    false
+}
+
 /// Prompts user to pick a device interactively.
 pub async fn prompt_device_selection(
     selection: &mut DeviceSelectionContext,
@@ -215,6 +236,9 @@ pub async fn prompt_device_selection(
             let _raw_guard = RawModeGuard::enter();
             let key_event = loop {
                 if let Ok(Event::Key(key)) = event::read() {
+                    if key.kind == KeyEventKind::Release {
+                        continue;
+                    }
                     if key.modifiers.contains(KeyModifiers::CONTROL)
                         && key.code == KeyCode::Char('c')
                     {
@@ -226,14 +250,15 @@ pub async fn prompt_device_selection(
             };
             drop(_raw_guard);
 
-            match key_event.code {
-                KeyCode::Enter => {
-                    if selection.contains_index(1) {
-                        term_println("");
-                        return Some(selection.device_for_index(1).unwrap().id.clone());
-                    }
-                    continue;
+            if is_enter_key(&key_event) {
+                if selection.contains_index(1) {
+                    term_println("");
+                    return Some(selection.device_for_index(1).unwrap().id.clone());
                 }
+                continue;
+            }
+
+            match key_event.code {
                 KeyCode::Char('q') | KeyCode::Char('Q') => {
                     term_println(&cyan("\n👋 Quitting..."));
                     std::process::exit(0);

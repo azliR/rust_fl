@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use crossterm::event::{self, Event, KeyCode, KeyModifiers};
+use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use notify::{EventKind, RecursiveMode, Watcher};
 use regex::Regex;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -224,6 +224,10 @@ impl FlutterRunner {
                         Ok(_) => continue,
                         Err(_) => break,
                     };
+
+                    if key.kind == KeyEventKind::Release {
+                        continue;
+                    }
 
                     if key.modifiers.contains(KeyModifiers::CONTROL)
                         && key.code == KeyCode::Char('c')
